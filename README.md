@@ -2,6 +2,7 @@
 
 📄 PyTorch implementation of "A Neural Algorithm of Artistic Style" (arXiv:1508.06576)
 
+
 ## Table of Contents
 
 - [Background](#background)
@@ -11,26 +12,27 @@
         - [Content loss function](#content-loss-function)
         - [Style loss function](#style-loss-function)
         - [Total loss function](#total-loss-function)
-- []()
-- []()
-- []()
-- []()
-- []()
-- []()
-- []()
-- []()
-- []()
-- []()
+- [Dependencies](#dependencies)
+- [Experiments](#experiments)
+    - [Hyper-parameters](#hyper-parameter)
+    - [Optimizer](#optimizer)
+    - [Model](#model)
+    - [Generated Artwork](#generated-artwork)
+- [References](#references)
 
 
 ## Background
 
 <p align="center">
-  <img src="./figs/illustration.png" width="80%"/>
+  <img src="./figs/illustration.png" width="60%"/>
 </p>
 
-### Model architecture
+In order to generate images, we take advantage of backpropagation to minimize the loss value. We call the input image which the art style will be transfered to **content image**, and the art style image is called **style image**.
 
+We initialized generated image to be random noise. Then we pass the initialized generated image, style image and content image to the neural network model which its parameters are pre-trained using ImageNet as mentioned in the paper.
+
+
+### Model architecture
 
 The feature space is provided by the `16` convolutional and `5` pooling layers of the **`19` layer VGG Network** without any of fully connected layers.
 
@@ -38,7 +40,6 @@ For image synthesis, the max-pooling operation is replaced by average pooling im
 
 
 ### Optimization method
-
 
 - For content image, perform gradient descent on a **white noise image** to ﬁnd another image that **matches the feature responses of the original image**.
 - For style image, perform gradient descent from a **white noise image** to find another image that **matches the style representation of the original image**.
@@ -55,7 +56,6 @@ $$
 $$
 
 where $F_{ij}^{l}$ is the activation of the $i_{th}$ filter at position $j$ in layer $l$, where $F_{ij}^{l} \in \mathcal{R}^{N_l \times M_l}$. A layer with $N_l$ distinct filters has $N_l$ feature maps each of size $M_l$, where $M_l$ is the *height* times the *width* of the feature map.
-
 
 #### Style loss function
 
@@ -87,9 +87,7 @@ $$
 
 where $w_l$ are weighting factors of the contribution of each layer to the total loss.
 
-
 #### Total loss function
-
 
 Jointly minimize the distance of a white noise image from the content representation of the photograph in one layer of the network and the style representation of the painting in a number of layers of the CNN. So let $\overrightarrow{p}$ be the photograph and $\overrightarrow{a}$ be the artwork. The loss function to be minimized is
 
