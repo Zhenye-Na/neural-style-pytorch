@@ -119,10 +119,11 @@ class ArtNet(object):
         return input_img
 
     def _init_optimizer(self, input_img):
-        # this line to show that input is a parameter that requires a gradient
+        """Initialize LBFGS optimizer."""
         self.optimizer = optim.LBFGS([input_img.requires_grad_()])
 
     def _init_model_and_losses(self):
+        """Initialize model and loss funtions."""
         cnn = copy.deepcopy(self.model)
 
         # normalization module
