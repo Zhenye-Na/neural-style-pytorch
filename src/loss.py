@@ -17,11 +17,10 @@ import torch.nn.functional as F
 class ContentLoss(nn.Module):
     """
     Content Loss.
-
-
-
     """
+
     def __init__(self, target,):
+        """Initialize content loss"""
         super(ContentLoss, self).__init__()
         # we 'detach' the target content from the tree used
         # to dynamically compute the gradient: this is a stated value,
@@ -30,20 +29,21 @@ class ContentLoss(nn.Module):
         self.target = target.detach()
 
     def forward(self, inputs):
+        """Forward pass."""
         self.loss = F.mse_loss(inputs, self.target)
         return inputs
 
 
 class StyleLoss(nn.Module):
-    """
-    Style Loss.
-    
-    """
+    """Style Loss."""
+
     def __init__(self, target_feature):
+        """Initialize style loss."""
         super(StyleLoss, self).__init__()
         self.target = gram_matrix(target_feature).detach()
 
     def forward(self, inputs):
+        """Forward pass."""
         G = gram_matrix(inputs)
         self.loss = F.mse_loss(G, self.target)
         return inputs

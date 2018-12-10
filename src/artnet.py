@@ -9,13 +9,17 @@ Convolutional Network model.
         A Neural Algorithm of Artistic Style. arXiv:1508.06576
 """
 
+import copy
+
 import torch
 import torch.nn as nn
 import torch.optim as optim
 import torchvision.models as models
 import torch.utils.model_zoo as model_zoo
 
-from gram import GramMatrix
+from utils import *
+from loss import StyleLoss, ContentLoss
+
 
 # change from "https" to "http" to avoid SSl Configuration error
 # chnage back to "https" if needed
@@ -39,170 +43,151 @@ cfg = {
 }
 
 
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+
 class ArtNet(object):
     """Style Transfer model."""
 
-    def __init__(self, style, content, pastiche, args, content_weight=1, style_weight=1000):
+    def __init__(self, args, normalization_mean, normalization_std,
+                 style_img, content_img, content_weight=1, style_weight=1000000):
         """Style Transfer model initialization."""
         super(ArtNet, self).__init__()
 
         self.args = args
 
-        # initializeb style, content and pastiche images
-        self.style = style
-        self.content = content
-        self.pastiche = nn.Parameter(pastiche.data)
+        self.style_img = style_img
+        self.content_img = content_img
 
         self.content_layers = ['conv_4']
         self.style_layers = ['conv_1', 'conv_2', 'conv_3', 'conv_4', 'conv_5']
-        self.content_weight = args.content_weight
-        self.style_weight = args.style_weight
 
-        self.loss_network = vgg19(pretrained=True).features.cuda().eval()
-        self.transform_network = nn.Sequential(
-            nn.ReflectionPad2d(40),
-            nn.Conv2d(3, 32, 9, stride=1, padding=4),
-            nn.Conv2d(32, 64, 3, stride=2, padding=1),
-            nn.Conv2d(64, 128, 3, stride=2, padding=1),
-            nn.Conv2d(128, 128, 3, stride=1, padding=0),
-            nn.Conv2d(128, 128, 3, stride=1, padding=0),
-            nn.Conv2d(128, 128, 3, stride=1, padding=0),
-            nn.Conv2d(128, 128, 3, stride=1, padding=0),
-            nn.Conv2d(128, 128, 3, stride=1, padding=0),
-            nn.Conv2d(128, 128, 3, stride=1, padding=0),
-            nn.Conv2d(128, 128, 3, stride=1, padding=0),
-            nn.Conv2d(128, 128, 3, stride=1, padding=0),
-            nn.Conv2d(128, 128, 3, stride=1, padding=0),
-            nn.Conv2d(128, 128, 3, stride=1, padding=0),
-            nn.ConvTranspose2d(128, 64, 3, stride=2,
-                               padding=1, output_padding=1),
-            nn.ConvTranspose2d(64, 32, 3, stride=2,
-                               padding=1, output_padding=1),
-            nn.Conv2d(32, 3, 9, stride=1, padding=4),
-        )
+        # mean and std used for normalization
+        self.normalization_mean = normalization_mean
+        self.normalization_std = normalization_std
 
-        self.grammatrix = GramMatrix()
-        self.criterion = nn.MSELoss()
+        # weights of content image and style image
+        self.content_weight = args.content_weight if args else content_weight
+        self.style_weight = args.style_weight if args else style_weight
 
-        self.use_cuda = torch.cuda.is_available()
-        if self.use_cuda:
-            self.loss_network = self.loss_network.cuda()
-            self.grammatrix.cuda()
+        # initialize vgg19 pre-trained model
+        self.model = vgg19(pretrained=True).features.to(device).eval()
 
-    def train(self):
+    def train(self, input_img):
         """Training process."""
-        self.optimizer = optim.LBFGS([self.pastiche])
+        print("==> Building the style transfer model ...")
+        model, style_losses, content_losses = self._init_model_and_losses()
 
-        def closure():
-            self.optimizer.zero_grad()
+        # initialize LBFGS optimizer
+        self._init_optimizer(input_img)
 
-            pastiche = self.pastiche.clone()
-            pastiche.data.clamp_(0, 1)
-            content = self.content.clone()
-            style = self.style.clone()
+        print("==> Start training ...")
 
-            content_loss = 0
-            style_loss = 0
+        for epoch in range(0, self.args.epochs):
 
-            i = 1
+            def closure():
+                # correct the values of updated input image
+                input_img.data.clamp_(0, 1)
 
-            def not_inplace(layer):
-                return nn.ReLU(inplace=False) if isinstance(layer, nn.ReLU) else layer
+                self.optimizer.zero_grad()
+                model(input_img)
+                style_score = 0
+                content_score = 0
 
-            for layer in list(self.loss_network.features):
-                layer = not_inplace(layer)
-                if self.use_cuda:
-                    layer.cuda()
+                for sl in style_losses:
+                    style_score += sl.loss
+                for cl in content_losses:
+                    content_score += cl.loss
 
-                pastiche, content, style = layer.forward(pastiche), layer.forward(content), layer.forward(style)
+                style_score *= self.style_weight
+                content_score *= self.content_weight
 
-                if isinstance(layer, nn.Conv2d):
-                    name = "conv_" + str(i)
+                loss = style_score + content_score
+                loss.backward()
 
-                    # content layers
-                    if name in self.content_layers:
-                        content_loss += self.criterion(
-                            pastiche * self.content_weight, content.detach() * self.content_weight)
+                if epoch % 5 == 0:
+                    print("Epoch {}: Style Loss : {:4f} Content Loss: {:4f}".format(
+                        epoch, style_score.item(), content_score.item()))
 
-                    # style layers
-                    if name in self.style_layers:
-                        pastiche_g, style_g = self.grammatrix.forward(
-                            pastiche), self.grammatrix.forward(style)
-                        style_loss += self.criterion(
-                            pastiche_g * self.style_weight, style_g.detach() * self.style_weight)
+                return style_score + content_score
 
-                if isinstance(layer, nn.ReLU):
-                    i += 1
+            self.optimizer.step(closure)
 
-            total_loss = content_loss + style_loss
-            total_loss.backward()
+        # clamp to correct data antries range from 0 to 1
+        input_img.data.clamp_(0, 1)
 
-            return total_loss
+        return input_img
 
-        self.optimizer.step(closure)
-        return self.pastiche
+    def _init_optimizer(self, input_img):
+        # this line to show that input is a parameter that requires a gradient
+        self.optimizer = optim.LBFGS([input_img.requires_grad_()])
 
-    def batch_train(self, content):
-        """Batch training."""
-        self.optimizer = optim.Adam(
-            self.transform_network.parameters(), lr=self.args.lr)
+    def _init_model_and_losses(self):
+        cnn = copy.deepcopy(self.model)
 
-        self.optimizer.zero_grad()
+        # normalization module
+        normalization = Normalization(
+            self.normalization_mean, self.normalization_std).to(device)
 
-        content = content.clone()
-        style = self.style.clone()
-        pastiche = self.transform_network.forward(content)
+        content_losses = []
+        style_losses = []
 
-        content_loss = 0
-        style_loss = 0
+        # assuming that cnn is a nn.Sequential, so we make a new nn.Sequential
+        # to put in modules that are supposed to be activated sequentially
+        model = nn.Sequential(normalization)
 
-        i = 1
-        not_inplace = lambda layer: nn.ReLU(inplace=False) if isinstance(layer, nn.ReLU) else layer
-        for layer in list(self.loss_network.features):
-            layer = not_inplace(layer)
-            if self.use_cuda:
-                layer.cuda()
-
-            pastiche, content, style = layer.forward(pastiche), layer.forward(content), layer.forward(style)
-
+        i = 0  # increment every time we see a conv
+        for layer in cnn.children():
             if isinstance(layer, nn.Conv2d):
-                name = "conv_" + str(i)
-
-                if name in self.content_layers:
-                    content_loss += self.criterion(pastiche * self.content_weight,
-                                                   content.detach() * self.content_weight)
-                if name in self.style_layers:
-                    pastiche_g, style_g = self.grammatrix.forward(pastiche), self.grammatrix.forward(style)
-                    style_loss += self.criterion(pastiche_g * self.style_weight,
-                                                 style_g.detach() * self.style_weight)
-
-            if isinstance(layer, nn.ReLU):
                 i += 1
+                name = 'conv_{}'.format(i)
+            elif isinstance(layer, nn.ReLU):
+                name = 'relu_{}'.format(i)
+                # The in-place version doesn't play very nicely with the ContentLoss
+                # and StyleLoss we insert below. So we replace with out-of-place
+                # ones here.
+                layer = nn.ReLU(inplace=False)
+            elif isinstance(layer, nn.MaxPool2d):
+                name = 'pool_{}'.format(i)
+            elif isinstance(layer, nn.BatchNorm2d):
+                name = 'bn_{}'.format(i)
+            else:
+                raise RuntimeError('Unrecognized layer: {}'.format(
+                    layer.__class__.__name__))
 
-        total_loss = content_loss + style_loss
-        total_loss.backward()
+            model.add_module(name, layer)
 
-        # for group in self.optimizer.param_groups:
-        #     for p in group['params']:
-        #         state = self.optimizer.state[p]
-        #         if state['step'] >= 1024:
-        #             state['step'] = 1000
-        self.optimizer.step()
+            if name in self.content_layers:
+                # add content loss:
+                target = model(self.content_img).detach()
+                content_loss = ContentLoss(target)
+                model.add_module("content_loss_{}".format(i), content_loss)
+                content_losses.append(content_loss)
 
-        return content_loss, style_loss, total_loss, self.pastiche
+            if name in self.style_layers:
+                # add style loss:
+                target_feature = model(self.style_img).detach()
+                style_loss = StyleLoss(target_feature)
+                model.add_module("style_loss_{}".format(i), style_loss)
+                style_losses.append(style_loss)
 
-    def save(self):
-        """Save model."""
-        torch.save({'state_dict': self.transform_network.state_dict(),
-                    'optimizer': self.optimizer.state_dict(),
-                    }, 'artnet.pth')
+        # now we trim off the layers after the last content and style losses
+        for i in range(len(model) - 1, -1, -1):
+            if isinstance(model[i], ContentLoss) or isinstance(model[i], StyleLoss):
+                break
 
+        model = model[:(i + 1)]
+
+        return model, style_losses, content_losses
 
 
 class VGG(nn.Module):
-    
+    """VGG model."""
+
     def __init__(self, features, num_classes=1000, init_weights=True):
+        """Model initialization."""
         super(VGG, self).__init__()
+
         self.features = features
         self.classifier = nn.Sequential(
             nn.Linear(512 * 7 * 7, 4096),
@@ -217,15 +202,18 @@ class VGG(nn.Module):
             self._initialize_weights()
 
     def forward(self, x):
+        """Forward pass."""
         x = self.features(x)
         x = x.view(x.size(0), -1)
         x = self.classifier(x)
         return x
 
     def _initialize_weights(self):
+        """Weight initialization."""
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
-                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+                nn.init.kaiming_normal_(
+                    m.weight, mode='fan_out', nonlinearity='relu')
                 if m.bias is not None:
                     nn.init.constant_(m.bias, 0)
             elif isinstance(m, nn.BatchNorm2d):
@@ -237,6 +225,15 @@ class VGG(nn.Module):
 
 
 def make_layers(cfg, batch_norm=False):
+    """Create layers of vgg model.
+
+    Args:
+        cfg (list): configuration for vgg architecture
+        batch_norm (bool): whether use batch normalization for vgg model
+
+    Return:
+        nn.Sequential(*layers)
+    """
     layers = []
     in_channels = 3
     for v in cfg:
@@ -265,5 +262,5 @@ def vgg19(pretrained=False, **kwargs):
 
     if pretrained:
         model.load_state_dict(model_zoo.load_url(model_urls['vgg19'],
-                              model_dir='../'))
+                                                 model_dir='../'))
     return model

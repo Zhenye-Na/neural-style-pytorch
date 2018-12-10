@@ -9,13 +9,12 @@ High level pipeline.
         A Neural Algorithm of Artistic Style. arXiv:1508.06576
 """
 
+from __future__ import print_function
+
 import os
 import argparse
-import numpy as np
-
 import torch
-import torch.utils.data
-import torchvision.datasets as datasets
+
 
 from artnet import ArtNet
 from utils import *
@@ -26,16 +25,25 @@ def parse_args():
     parser = argparse.ArgumentParser()
 
     # directory
-    parser.add_argument('--style_path', type=str, default="../styles/", help='path to style images')
-    parser.add_argument('--content_path', type=str, default="../contents/", help='path to content images')
+    parser.add_argument('--style_path', type=str,
+                        default="../styles/", help='path to style images')
+    parser.add_argument('--content_path', type=str,
+                        default="../contents/", help='path to content images')
+    parser.add_argument('--output_path', type=str,
+                        default="../outputs/", help='path to output images')
 
     # hyperparameters settings
-    parser.add_argument('--lr', type=float, default=0.01, help='default learning rate')
-    parser.add_argument('--mode', type=str, default="single", help='mode for training')
-    parser.add_argument('--epochs', type=int, default=100, help='number of epochs to train')
+    parser.add_argument('--lr', type=float, default=0.01,
+                        help='default learning rate')
+    parser.add_argument('--mode', type=str, default="single",
+                        help='mode for training')
+    parser.add_argument('--epochs', type=int, default=300,
+                        help='number of epochs to train')
 
-    parser.add_argument('--content_weight', type=int, default=1, help='weight of content images')
-    parser.add_argument('--style_weight', type=int, default=1000, help='weight of style images')
+    parser.add_argument('--content_weight', type=int,
+                        default=1, help='weight of content images')
+    parser.add_argument('--style_weight', type=int,
+                        default=1000000, help='weight of style images')
 
     # parse the arguments
     args = parser.parse_args()
@@ -48,67 +56,37 @@ def main():
     args = parse_args()
 
     # CUDA Configurations
-    dtype = torch.cuda.FloatTensor if torch.cuda.is_available() else torch.FloatTensor
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    # dtype = torch.cuda.FloatTensor if torch.cuda.is_available() else torch.FloatTensor
+
+    style_img = image_loader(os.path.join(
+        args.style_path, "picasso.jpg")).to(device, torch.float)
+    content_img = image_loader(os.path.join(
+        args.content_path, "dancing.jpg")).to(device, torch.float)
+
+    assert style_img.size() == content_img.size(
+    ), "Style and Content image should be the same size"
 
     # Content and style
-    style = image_loader(os.path.join(args.style_path, "starry_night.jpg")).type(dtype)
-    content = image_loader(os.path.join(args.content_path, "friends.jpg")).type(dtype)
-    pastiche = image_loader(os.path.join(args.content_path, "friends.jpg")).type(dtype)
-    pastiche.data = torch.randn(pastiche.data.size()).type(dtype)
+    # style = image_loader(os.path.join(args.style_path, "starry_night.jpg")).type(dtype)
+    # content = image_loader(os.path.join(args.content_path, "friends.jpg")).type(dtype)
+    # pastiche = image_loader(os.path.join(args.content_path, "friends.jpg")).type(dtype)
+    # pastiche.data = torch.randn(pastiche.data.size()).type(dtype)
 
-    if args.mode == "single":
-        # create an ArtNet model
-        model = ArtNet(style, content, pastiche, args)
+    normalization_mean = torch.tensor([0.485, 0.456, 0.406]).to(device)
+    normalization_std = torch.tensor([0.229, 0.224, 0.225]).to(device)
 
-        if not os.path.exists("../outputs/"):
-            os.mkdir("../outputs/")
+    model = ArtNet(args,
+                   normalization_mean,
+                   normalization_std,
+                   style_img,
+                   content_img)
 
-        print("==> Start training ...")
-        for i in range(args.epochs):
-            pastiche = model.train()
+    output_img = model.train(content_img.clone())
 
-            if i % 5 == 0:
-                print("Iteration: %d" % (i))
-                path = "../outputs/%d.png" % (i)
-                pastiche.data.clamp_(0, 1)
-                save_image(pastiche, path)
-
-    elif args.mode == "ITN":
-        num_epochs = 3
-        N = 4
-
-        # create an ArtNet model
-        model = ArtNet(style, content, pastiche, args)
-
-        # content images
-        coco = datasets.ImageFolder(root=args.content_path, transform=transforms)
-        content_loader = torch.utils.data.DataLoader(coco, batch_size=N, shuffle=True, **kwargs)
-        style = image_loader(os.path.join(args.style_path, "starry_night.jpg")).type(dtype)
-
-        if not os.path.exists("../outputs2/"):
-            os.mkdir("../outputs2/")
-
-        print("==> Start training ...")
-        for epoch in range(num_epochs):
-            for i, content_batch in enumerate(content_loader):
-                iteration = epoch * i + i
-                content_loss, style_loss, total_loss, pastiches = ArtNet.batch_train(content_batch, style)
-
-                if i % 10 == 0:
-                    print("Iteration: %d" % (iteration))
-                    print("Content loss: %f" % (content_loss.data[0]))
-                    print("Style loss: %f" % (style_loss.data[0]))
-                    print("Total loss: %f" % (total_loss.data[0]))
-
-                if i % 500 == 0:
-                    path = "../outputs2/%d_" % (iteration)
-                    paths = [path + str(n) + ".png" for n in range(N)]
-                    save_batch_images(pastiches, paths)
-
-                    path = "../outputs2/content_%d_" % (iteration)
-                    paths = [path + str(n) + ".png" for n in range(N)]
-                    save_batch_images(content_batch, paths)
-                    model.save()
+    if not os.path.exists(args.output_path):
+        os.mkdir(args.output_path)
+    save_image(output_img, args.output_path)
 
 
 if __name__ == '__main__':
