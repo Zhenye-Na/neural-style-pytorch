@@ -117,22 +117,17 @@ scipy
 I use the Adam optimizer to minimize total loss. We iteratively update our output image such that it minimizes our loss: we don't update the weights associated with our network, but instead we train our input image to minimize loss. As for the L-BFGS optimizer, which if you are familiar with this algorithm is recommended.
 
 ```python
-optimizer = torch.optim.Adam(model.parameters(),
-                             lr=args.lr,
-                             weight_decay=args.weight_decay)
+    def _init_optimizer(self, input_img):
+        """Initialize LBFGS optimizer."""
+        self.optimizer = optim.LBFGS([input_img.requires_grad_()])
 ```
-
-
-### Model
-
-
 
 
 ### Generated Artwork
 
-
-
-
+|       Content Image       	|       Style Image       	|     Output Image     	|
+|:-------------------------:	|:-----------------------:	|:--------------------:	|
+| ![](contents/dancing.jpg) 	| ![](styles/picasso.jpg) 	| ![](outputs/out.jpg) 	|
 
 
 
