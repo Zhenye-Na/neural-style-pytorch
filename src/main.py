@@ -37,7 +37,7 @@ def parse_args():
                         help='default learning rate')
     parser.add_argument('--mode', type=str, default="single",
                         help='mode for training')
-    parser.add_argument('--epochs', type=int, default=300,
+    parser.add_argument('--epochs', type=int, default=31,
                         help='number of epochs to train')
 
     parser.add_argument('--content_weight', type=int,
